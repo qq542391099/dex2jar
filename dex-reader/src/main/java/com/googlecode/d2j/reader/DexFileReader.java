@@ -15,6 +15,7 @@
  */
 package com.googlecode.d2j.reader;
 
+import com.googlecode.d2j.util.TextUtil;
 import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -671,6 +672,71 @@ public class DexFileReader implements BaseDexFileReader {
             }
         }
     }
+
+    @Override
+    public void accept(DexFileVisitor dv, int config, String specifyClass) {
+        specifyClass = "L" + specifyClass.replace(".", "/") + ";";
+        dv.visitDexFileVersion(this.dex_version);
+        for (int cid = 0; cid < class_defs_size; cid++) {
+            boolean res = accept(dv, cid, config, specifyClass);
+            if (res) {
+                break;
+            }
+        }
+        dv.visitEnd();
+    }
+
+    /**
+     * Makes the given visitor visit the dex file. Notice the
+     * {@link com.googlecode.d2j.visitors.DexFileVisitor#visitEnd()} is not called
+     *
+     * @param dv
+     *            visitor
+     * @param classIdx
+     *            index of class_def
+     * @param config
+     *            config flags, {@link #SKIP_CODE}, {@link #SKIP_DEBUG}, {@link #SKIP_ANNOTATION},
+     *            {@link #SKIP_FIELD_CONSTANT}
+     */
+    @Override
+    public boolean accept(DexFileVisitor dv, int classIdx, int config, String specifyClass) {
+        classDefIn.position(classIdx * 32);
+        int class_idx = classDefIn.getInt();
+        int access_flags = classDefIn.getInt();
+        int superclass_idx = classDefIn.getInt();
+        int interfaces_off = classDefIn.getInt();
+        int source_file_idx = classDefIn.getInt();
+        int annotations_off = classDefIn.getInt();
+        int class_data_off = classDefIn.getInt();
+        int static_values_off = classDefIn.getInt();
+
+        String className = getType(class_idx);
+        if(!TextUtil.isEmpty(specifyClass)) {
+            if(!specifyClass.equals(className)) {
+                return false;
+            }
+        }
+        if(ignoreClass(className)) return false;
+        String superClassName = getType(superclass_idx);
+        String[] interfaceNames = getTypeList(interfaces_off);
+        try {
+            DexClassVisitor dcv = dv.visit(access_flags, className, superClassName, interfaceNames);
+            if (dcv != null)// 不处理
+            {
+                acceptClass(dcv, source_file_idx, annotations_off, class_data_off, static_values_off, config);
+                dcv.visitEnd();
+            }
+        } catch (Exception ex) {
+            DexException dexException = new DexException(ex, "Error process class: [%d]%s", class_idx, className);
+            if (0 != (config & IGNORE_READ_EXCEPTION)) {
+                niceExceptionMessage(dexException, 0);
+            } else {
+                throw dexException;
+            }
+        }
+        return !TextUtil.isEmpty(specifyClass);
+    }
+
 
     public Boolean ignoreClass(String className){
        return false;

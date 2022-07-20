@@ -16,13 +16,18 @@
  */
 package com.googlecode.dex2jar.tools;
 
+import static com.googlecode.d2j.reader.zip.ZipUtil.toByteArray;
+
 import com.googlecode.d2j.dex.Dex2jar;
 import com.googlecode.d2j.reader.BaseDexFileReader;
 import com.googlecode.d2j.reader.DexFileReader;
 import com.googlecode.d2j.reader.MultiDexFileReader;
+import com.googlecode.d2j.util.zip.ZipEntry;
+import com.googlecode.d2j.util.zip.ZipFile;
 import com.googlecode.dex2jar.ir.ET;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -30,7 +35,10 @@ import java.nio.file.Path;
 public class Dex2jarCmd extends BaseCmd {
 
     public static void main(String... args) {
+
+        long sTime = System.currentTimeMillis();
         new Dex2jarCmd().doMain(args);
+        System.err.println("MAIN dex2jar cost: " + (System.currentTimeMillis() - sTime));
     }
 
     @Opt(opt = "e", longOpt = "exception-file", description = "detail exception file, default is $current_dir/[file-name]-error.zip", argName = "file")
@@ -65,6 +73,9 @@ public class Dex2jarCmd extends BaseCmd {
 
     @Opt(opt = "nc", longOpt = "no-code", hasArg = false, description = "")
     private boolean noCode = false;
+
+    @Opt(opt = "sc", longOpt = "specify-class", description = "")
+    private String specifyClass = "";
 
     @Override
     protected void doCommandLine() throws Exception {
@@ -104,12 +115,28 @@ public class Dex2jarCmd extends BaseCmd {
             String baseName = getBaseName(new File(fileName).toPath());
             Path file = output == null ? currentDir.resolve(baseName + "-dex2jar.jar") : output;
             System.err.println("dex2jar " + fileName + " -> " + file);
-
-            BaseDexFileReader reader = MultiDexFileReader.open(Files.readAllBytes(new File(fileName).toPath()));
             BaksmaliBaseDexExceptionHandler handler = notHandleException ? null : new BaksmaliBaseDexExceptionHandler();
-            Dex2jar.from(reader).withExceptionHandler(handler).reUseReg(reuseReg).topoLogicalSort()
-                    .skipDebug(!debugInfo).optimizeSynchronized(this.optmizeSynchronized).printIR(printIR)
-                    .noCode(noCode).skipExceptions(skipExceptions).to(file);
+            // apk转为dex处理
+            if (fileName.endsWith(".apk") && specifyClass != null && !"".equals(specifyClass)) {
+                long sTime = System.currentTimeMillis();
+                try (ZipFile zipFile = new ZipFile(Files.readAllBytes(new File(fileName).toPath()))) {
+                    System.err.println("Files.readAllBytes cost: " + (System.currentTimeMillis() - sTime));
+                    for (ZipEntry e : zipFile.entries()) {
+                        String entryName = e.getName();
+                        if (entryName.startsWith("classes") && entryName.endsWith(".dex")) {
+                            boolean isAchieve = run(toByteArray(zipFile.getInputStream(e)), file, handler);
+                            if (isAchieve) {
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else {
+                boolean isAchieve = run(Files.readAllBytes(new File(fileName).toPath()), file, handler);
+                if (isAchieve) {
+                    break;
+                }
+            }
 
             if (!notHandleException) {
                 if (handler.hasException()) {
@@ -123,6 +150,17 @@ public class Dex2jarCmd extends BaseCmd {
             // long endTS = System.currentTimeMillis();
             // System.err.println(String.format("%.2f", (float) (endTS - baseTS) / 1000));
         }
+    }
+
+    private boolean run(byte[] data, Path file, BaksmaliBaseDexExceptionHandler handler) throws IOException {
+        BaseDexFileReader reader = MultiDexFileReader.open(data);
+
+        long sTime = System.currentTimeMillis();
+        boolean isAchieve = Dex2jar.from(reader).withExceptionHandler(handler).reUseReg(reuseReg).topoLogicalSort()
+                .skipDebug(!debugInfo).optimizeSynchronized(this.optmizeSynchronized).printIR(printIR)
+                .noCode(noCode).skipExceptions(skipExceptions).specifyClass(specifyClass).to(file);
+        System.err.println("dex2jar cost: " + (System.currentTimeMillis() - sTime));
+        return isAchieve;
     }
 
     @Override

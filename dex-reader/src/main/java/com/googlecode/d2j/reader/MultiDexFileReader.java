@@ -117,6 +117,15 @@ public class MultiDexFileReader implements BaseDexFileReader {
         item.reader.accept(dv, item.idx, config);
     }
 
+    @Override
+    public void accept(DexFileVisitor dv, int config, String specifyClass) {
+    }
+
+    @Override
+    public boolean accept(DexFileVisitor dv, int classIdx, int config, String specifyClass) {
+        return false;
+    }
+
     static class Item {
         int idx;
         DexFileReader reader;

@@ -1,13 +1,13 @@
 /*
  * dex2jar - Tools to work with android .dex and java .class files
  * Copyright (c) 2009-2012 Panxiaobo
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,6 +16,16 @@
  */
 package com.googlecode.d2j.dex;
 
+import com.googlecode.d2j.converter.IR2JConverter;
+import com.googlecode.d2j.node.DexFileNode;
+import com.googlecode.d2j.node.DexMethodNode;
+import com.googlecode.d2j.reader.BaseDexFileReader;
+import com.googlecode.d2j.reader.DexFileReader;
+import com.googlecode.d2j.reader.zip.ZipUtil;
+import com.googlecode.d2j.util.TextUtil;
+import com.googlecode.dex2jar.ir.IrMethod;
+import com.googlecode.dex2jar.ir.stmt.LabelStmt;
+import com.googlecode.dex2jar.ir.stmt.Stmt;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -26,25 +36,15 @@ import java.nio.file.Path;
 import java.nio.file.spi.FileSystemProvider;
 import java.util.HashMap;
 import java.util.Map;
-
-import com.googlecode.d2j.node.DexMethodNode;
-import com.googlecode.d2j.reader.BaseDexFileReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
-import com.googlecode.d2j.converter.IR2JConverter;
-import com.googlecode.d2j.node.DexFileNode;
-import com.googlecode.d2j.reader.DexFileReader;
-import com.googlecode.d2j.reader.zip.ZipUtil;
-import com.googlecode.dex2jar.ir.IrMethod;
-import com.googlecode.dex2jar.ir.stmt.LabelStmt;
-import com.googlecode.dex2jar.ir.stmt.Stmt;
-import org.objectweb.asm.commons.Remapper;
-import org.objectweb.asm.commons.RemappingClassAdapter;
-
 public class Dex2jar {
+
+    private String specifyClass;
+
     public static Dex2jar from(byte[] in) throws IOException {
         return from(new DexFileReader(ZipUtil.readDex(in)));
     }
@@ -81,11 +81,20 @@ public class Dex2jar {
         readerConfig |= DexFileReader.SKIP_DEBUG;
     }
 
-    private void doTranslate(final Path dist) throws IOException {
+    private boolean doTranslate(final Path dist) throws IOException {
 
         DexFileNode fileNode = new DexFileNode();
         try {
-            reader.accept(fileNode, readerConfig | DexFileReader.IGNORE_READ_EXCEPTION);
+            if (TextUtil.isEmpty(specifyClass)) {
+                reader.accept(fileNode, readerConfig | DexFileReader.IGNORE_READ_EXCEPTION);
+            } else {
+                reader.accept(fileNode, readerConfig | DexFileReader.IGNORE_READ_EXCEPTION, specifyClass);
+                if (fileNode.clzs.isEmpty()) {
+                    System.err.println("未找到指定class");
+                    return false;
+                }
+            }
+
         } catch (Exception ex) {
             exceptionHandler.handleFileException(ex);
         }
@@ -123,7 +132,7 @@ public class Dex2jar {
             }
         };
 
-        new ExDex2Asm(exceptionHandler) {
+        ExDex2Asm exDex2Asm = new ExDex2Asm(exceptionHandler) {
             public void convertCode(DexMethodNode methodNode, MethodVisitor mv, ClzCtx clzCtx) {
                 if ((readerConfig & DexFileReader.SKIP_CODE) != 0 && methodNode.method.getName().equals("<clinit>")) {
                     // also skip clinit
@@ -184,8 +193,9 @@ public class Dex2jar {
                         .asm(mv)
                         .convert();
             }
-        }.convertDex(fileNode, cvf);
-
+        };
+        exDex2Asm.convertDex(fileNode, cvf);
+        return !TextUtil.isEmpty(specifyClass);
     }
 
     public DexExceptionHandler getExceptionHandler() {
@@ -279,12 +289,12 @@ public class Dex2jar {
         return this;
     }
 
-    public void to(Path file) throws IOException {
+    public boolean to(Path file) throws IOException {
         if (Files.exists(file) && Files.isDirectory(file)) {
-            doTranslate(file);
+            return doTranslate(file);
         } else {
             try (FileSystem fs = createZip(file)) {
-                doTranslate(fs.getPath("/"));
+                return doTranslate(fs.getPath("/"));
             }
         }
     }
@@ -317,6 +327,11 @@ public class Dex2jar {
         } else {
             this.readerConfig &= ~DexFileReader.SKIP_EXCEPTION;
         }
+        return this;
+    }
+
+    public Dex2jar specifyClass(String specifyClass) {
+        this.specifyClass = specifyClass;
         return this;
     }
 }
